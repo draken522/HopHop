@@ -14,6 +14,8 @@ from aiogram.types import (
     InlineKeyboardButton
 )
 
+from keep_alive import keep_alive
+
 import database
 from items import get_random_item
 
@@ -30,6 +32,7 @@ dp = Dispatcher()
 
 
 COOLDOWN = 300
+
 
 active_items = {}
 
@@ -54,10 +57,12 @@ async def hop(message: Message):
     user = message.from_user
     chat = message.chat.id
 
+
     data = await database.get_user(
         user,
         chat
     )
+
 
     now = int(time.time())
 
@@ -67,10 +72,11 @@ async def hop(message: Message):
         remain = COOLDOWN - (now - data[4])
 
         await message.reply(
-            f"⏳ {remain//60} دقیقه صبر کن"
+            f"⏳ هنوز {remain//60} دقیقه باید صبر کنی"
         )
 
         return
+
 
 
     await database.give_hop(
@@ -86,6 +92,8 @@ async def hop(message: Message):
 
 
 
+
+
 @dp.message(Command("hop"))
 async def my_score(message: Message):
 
@@ -94,9 +102,13 @@ async def my_score(message: Message):
         message.chat.id
     )
 
+
     await message.reply(
-        f"💎 Hop Point:\n{data[3]}"
+        f"🐾 امتیاز تو:\n\n"
+        f"💎 {data[3]} Hop Point"
     )
+
+
 
 
 
@@ -111,21 +123,26 @@ async def bag(message: Message):
     if not items:
 
         await message.reply(
-            "🎒 کیف خالی است"
+            "🎒 کیف تو خالی است"
         )
 
         return
 
 
-    text="🎒 کیف تو:\n\n"
+    text = "🎒 آیتم‌های تو:\n\n"
 
 
     for item in items:
 
-        text += f"{item[0]} | {item[1]}\n"
+        text += (
+            f"{item[0]}\n"
+            f"⭐ {item[1]}\n\n"
+        )
 
 
     await message.reply(text)
+
+
 
 
 
@@ -136,9 +153,25 @@ async def spawn_item():
         await asyncio.sleep(3600)
 
 
-        for chat_id in list(active_items.keys()):
+        # فعلا فقط برای گروه‌هایی که ثبت شده‌اند
+
+        async with database.aiosqlite.connect(database.DB) as db:
+
+            cursor = await db.execute(
+                "SELECT chat_id FROM groups"
+            )
+
+            groups = await cursor.fetchall()
+
+
+
+        for group in groups:
+
+            chat_id = group[0]
+
 
             item, rarity = get_random_item()
+
 
             active_items[chat_id] = (
                 item,
@@ -146,13 +179,13 @@ async def spawn_item():
             )
 
 
-            kb = InlineKeyboardMarkup(
+            keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
-                    InlineKeyboardButton(
-                        text="🎁 بردار",
-                        callback_data="take"
-                    )
+                        InlineKeyboardButton(
+                            text="🎁 بردار",
+                            callback_data="take_item"
+                        )
                     ]
                 ]
             )
@@ -160,40 +193,55 @@ async def spawn_item():
 
             await bot.send_message(
                 chat_id,
-                f"🎁 آیتم ظاهر شد!\n\n"
-                f"{item}\n"
-                f"⭐ {rarity}\n\n"
-                f"شانس گرفتن: 50٪",
-                reply_markup=kb
+                f"""
+🎁 آیتم جدید ظاهر شد!
+
+{item}
+
+⭐ درجه:
+{rarity}
+
+🎯 شانس گرفتن: 50٪
+""",
+                reply_markup=keyboard
             )
 
 
 
-@dp.callback_query(lambda c: c.data=="take")
-async def take(call: CallbackQuery):
-
-    chat = call.message.chat.id
 
 
-    if chat not in active_items:
+@dp.callback_query(lambda c: c.data == "take_item")
+async def take_item(call: CallbackQuery):
+
+    chat_id = call.message.chat.id
+
+
+    if chat_id not in active_items:
 
         await call.answer(
-            "چیزی نیست"
+            "❌ آیتمی وجود ندارد"
         )
 
         return
 
 
-    if random.randint(1,100) > 50:
+
+    chance = random.randint(1,100)
+
+
+    if chance > 50:
 
         await call.message.answer(
-            "💨 شانس نیاوردی"
+            f"💨 {call.from_user.first_name} شانس نیاورد!"
         )
 
         return
 
 
-    item, rarity = active_items.pop(chat)
+
+    item, rarity = active_items.pop(
+        chat_id
+    )
 
 
     await database.add_item(
@@ -204,11 +252,18 @@ async def take(call: CallbackQuery):
 
 
     await call.message.answer(
-        f"🎉 {call.from_user.first_name}\n\n"
-        f"گرفتی:\n"
-        f"{item}\n"
-        f"⭐ {rarity}"
+        f"""
+🎉 {call.from_user.first_name}
+
+آیتم را گرفتی:
+
+{item}
+
+⭐ {rarity}
+"""
     )
+
+
 
 
 
@@ -216,13 +271,20 @@ async def main():
 
     await database.init_db()
 
+
     asyncio.create_task(
         spawn_item()
     )
+
 
     await dp.start_polling(bot)
 
 
 
+
+
 if __name__ == "__main__":
+
+    keep_alive()
+
     asyncio.run(main())
